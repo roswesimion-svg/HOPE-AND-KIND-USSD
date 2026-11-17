@@ -50,8 +50,12 @@ async function stkPush(msisdn, amount) {
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'text/plain');
-  const { MSISDN, INPUT } = req.query;
-  const parts = String(INPUT || '').split('*').map((x) => x.trim()).filter(Boolean);
+  const { MSISDN, INPUT, USSDCODE } = req.query;
+  // Dialed code segments (e.g. *814*16#) are ignored if the gateway includes them in INPUT
+  const dialSegs = `${USSDCODE || ''}*${process.env.USSD_CODE || '*814*16#'}`
+    .replace(/#/g, '').split('*').map((x) => x.trim()).filter(Boolean);
+  const parts = String(INPUT || '').replace(/#/g, '').split('*').map((x) => x.trim()).filter(Boolean);
+  while (parts.length && dialSegs.includes(parts[0])) parts.shift();
 
   let out;
   try {
@@ -77,6 +81,6 @@ module.exports = async (req, res) => {
     out = 'END Service unavailable. Please try again later.';
   }
 
-  console.log(`${MSISDN} "${INPUT}" -> ${out.split('\n')[0]}`);
+  console.log('REQUEST', JSON.stringify(req.query), '->', out.split('\n')[0]);
   res.status(200).send(out);
 };
