@@ -1,0 +1,82 @@
+// HOPE and KIND USSD - Vercel version (stateless, uses cumulative INPUT like 1*John)
+
+const MPESA_ENV = process.env.MPESA_ENV || 'sandbox'; // 'sandbox' or 'production'
+const CONSUMER_KEY = process.env.MPESA_CONSUMER_KEY;
+const CONSUMER_SECRET = process.env.MPESA_CONSUMER_SECRET;
+const SHORTCODE = process.env.MPESA_SHORTCODE || '174379';
+const PASSKEY = process.env.MPESA_PASSKEY;
+const CALLBACK_URL = process.env.MPESA_CALLBACK_URL;
+const REG_FEE = Number(process.env.REG_FEE || 100);
+const TX_TYPE = process.env.MPESA_TX_TYPE || 'CustomerPayBillOnline'; // or CustomerBuyGoodsOnline
+const BASE = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
+
+const MENU = 'CON Welcome to HOPE and KIND. Select an option:\n1. Register\n2. Already a member';
+
+function timestamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+async function stkPush(msisdn, amount) {
+  const auth = Buffer.from(`${CONSUMER_KEY}:${CONSUMER_SECRET}`).toString('base64');
+  const tr = await fetch(`${BASE}/oauth/v1/generate?grant_type=client_credentials`, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  const { access_token } = await tr.json();
+  if (!access_token) throw new Error('Could not get M-Pesa token');
+
+  const ts = timestamp();
+  const password = Buffer.from(`${SHORTCODE}${PASSKEY}${ts}`).toString('base64');
+  const r = await fetch(`${BASE}/mpesa/stkpush/v1/processrequest`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      BusinessShortCode: SHORTCODE,
+      Password: password,
+      Timestamp: ts,
+      TransactionType: TX_TYPE,
+      Amount: amount,
+      PartyA: msisdn,
+      PartyB: SHORTCODE,
+      PhoneNumber: msisdn,
+      CallBackURL: CALLBACK_URL,
+      AccountReference: 'Registration',
+      TransactionDesc: 'Registration fee',
+    }),
+  });
+  return r.json();
+}
+
+module.exports = async (req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  const { MSISDN, INPUT } = req.query;
+  const parts = String(INPUT || '').split('*').map((x) => x.trim()).filter(Boolean);
+
+  let out;
+  try {
+    if (parts.length === 0) {
+      out = MENU;
+    } else if (parts[0] !== '1' && parts[0] !== '2') {
+      out = 'END Invalid option. Please dial again.';
+    } else if (parts.length === 1) {
+      out = parts[0] === '1'
+        ? 'CON Enter your full name:'
+        : 'CON You are not a member. Enter your full name to register and pay:';
+    } else {
+      const r = await stkPush(MSISDN, REG_FEE);
+      if (r.ResponseCode === '0') {
+        out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
+      } else {
+        console.error('STK failed:', r);
+        out = 'END Could not start payment. Please try again later.';
+      }
+    }
+  } catch (e) {
+    console.error(e);
+    out = 'END Service unavailable. Please try again later.';
+  }
+
+  console.log(`${MSISDN} "${INPUT}" -> ${out.split('\n')[0]}`);
+  res.status(200).send(out);
+};

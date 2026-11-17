@@ -1,0 +1,5 @@
+{
+  "name": "hope-and-kind-ussd",
+  "version": "1.0.0",
+  "engines": { "node": ">=18" }
+}
