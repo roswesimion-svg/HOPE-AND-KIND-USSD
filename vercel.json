@@ -1,4 +1,5 @@
 {
+  "regions": ["cpt1"],
   "rewrites": [
     { "source": "/", "destination": "/api/ussd_app" },
     { "source": "/ussd_app", "destination": "/api/ussd_app" },
