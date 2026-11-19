@@ -1,5 +1,4 @@
 // HOPE and KIND USSD - Vercel version (stateless, uses cumulative INPUT like 1*John)
-const { waitUntil } = require('@vercel/functions');
 
 const MPESA_ENV = process.env.MPESA_ENV || 'sandbox'; // 'sandbox' or 'production'
 const CONSUMER_KEY = process.env.MPESA_CONSUMER_KEY;
@@ -14,52 +13,22 @@ const BASE = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https
 const MENU = 'CON Welcome to HOPE and KIND. Select an option:\n1. Register\n2. Already a member';
 
 function timestamp() {
-  // Vercel runs in UTC; Daraja expects East Africa Time (UTC+3)
-  const d = new Date(Date.now() + 3 * 3600 * 1000);
+  const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-function normalizeMsisdn(m) {
-  const d = String(m || '').replace(/\D/g, '');
-  if (d.startsWith('254')) return d;
-  if (d.startsWith('0')) return '254' + d.slice(1);
-  if (d.length === 9) return '254' + d;
-  return d;
-}
-
-// fetch with a hard timeout and retries on network errors
-async function safeFetch(url, opts = {}, timeoutMs = 8000, retries = 1) {
-  for (let i = 0; ; i++) {
-    try {
-      return await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
-    } catch (e) {
-      if (i >= retries) throw e;
-    }
-  }
-}
-
-// cache the OAuth token between warm invocations (valid ~1h)
-let tokenCache = { value: null, exp: 0 };
-async function getToken() {
-  if (tokenCache.value && Date.now() < tokenCache.exp) return tokenCache.value;
+async function stkPush(msisdn, amount) {
   const auth = Buffer.from(`${CONSUMER_KEY}:${CONSUMER_SECRET}`).toString('base64');
-  const tr = await safeFetch(`${BASE}/oauth/v1/generate?grant_type=client_credentials`, {
+  const tr = await fetch(`${BASE}/oauth/v1/generate?grant_type=client_credentials`, {
     headers: { Authorization: `Basic ${auth}` },
   });
   const { access_token } = await tr.json();
   if (!access_token) throw new Error('Could not get M-Pesa token');
-  tokenCache = { value: access_token, exp: Date.now() + 50 * 60 * 1000 };
-  return access_token;
-}
-
-async function stkPush(msisdn, amount) {
-  msisdn = normalizeMsisdn(msisdn);
-  const access_token = await getToken();
 
   const ts = timestamp();
   const password = Buffer.from(`${SHORTCODE}${PASSKEY}${ts}`).toString('base64');
-  const r = await safeFetch(`${BASE}/mpesa/stkpush/v1/processrequest`, {
+  const r = await fetch(`${BASE}/mpesa/stkpush/v1/processrequest`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -75,7 +44,7 @@ async function stkPush(msisdn, amount) {
       AccountReference: 'Registration',
       TransactionDesc: 'Registration fee',
     }),
-  }, 10000, 1);
+  });
   return r.json();
 }
 
@@ -99,17 +68,13 @@ module.exports = async (req, res) => {
         ? 'CON Enter your full name:'
         : 'CON You are not a member. Enter your full name to register and pay:';
     } else {
-      // Answer the USSD gateway immediately (it times out in a few seconds);
-      // the STK push keeps running in the background.
-      waitUntil(
-        stkPush(MSISDN, REG_FEE)
-          .then((r) => {
-            if (r.ResponseCode === '0') console.log('STK sent', r.CheckoutRequestID);
-            else console.error('STK failed:', JSON.stringify(r));
-          })
-          .catch((e) => console.error('STK error:', e))
-      );
-      out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt that appears shortly.`;
+      const r = await stkPush(MSISDN, REG_FEE);
+      if (r.ResponseCode === '0') {
+        out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
+      } else {
+        console.error('STK failed:', r);
+        out = 'END Could not start payment. Please try again later.';
+      }
     }
   } catch (e) {
     console.error(e);
