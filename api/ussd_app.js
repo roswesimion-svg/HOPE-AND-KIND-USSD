@@ -1,4 +1,5 @@
 // HOPE and KIND USSD - Vercel version (stateless, uses cumulative INPUT like 1*John)
+const { waitUntil } = require('@vercel/functions');
 
 const MPESA_ENV = process.env.MPESA_ENV || 'sandbox'; // 'sandbox' or 'production'
 const CONSUMER_KEY = process.env.MPESA_CONSUMER_KEY;
@@ -27,8 +28,8 @@ function normalizeMsisdn(m) {
   return d;
 }
 
-// fetch with a hard timeout (USSD sessions die fast) and one quick retry on network errors
-async function safeFetch(url, opts = {}, timeoutMs = 4000, retries = 1) {
+// fetch with a hard timeout and retries on network errors
+async function safeFetch(url, opts = {}, timeoutMs = 8000, retries = 1) {
   for (let i = 0; ; i++) {
     try {
       return await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
@@ -74,7 +75,7 @@ async function stkPush(msisdn, amount) {
       AccountReference: 'Registration',
       TransactionDesc: 'Registration fee',
     }),
-  }, 5000, 0);
+  }, 10000, 1);
   return r.json();
 }
 
@@ -98,13 +99,17 @@ module.exports = async (req, res) => {
         ? 'CON Enter your full name:'
         : 'CON You are not a member. Enter your full name to register and pay:';
     } else {
-      const r = await stkPush(MSISDN, REG_FEE);
-      if (r.ResponseCode === '0') {
-        out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
-      } else {
-        console.error('STK failed:', r);
-        out = 'END Could not start payment. Please try again later.';
-      }
+      // Answer the USSD gateway immediately (it times out in a few seconds);
+      // the STK push keeps running in the background.
+      waitUntil(
+        stkPush(MSISDN, REG_FEE)
+          .then((r) => {
+            if (r.ResponseCode === '0') console.log('STK sent', r.CheckoutRequestID);
+            else console.error('STK failed:', JSON.stringify(r));
+          })
+          .catch((e) => console.error('STK error:', e))
+      );
+      out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt that appears shortly.`;
     }
   } catch (e) {
     console.error(e);
