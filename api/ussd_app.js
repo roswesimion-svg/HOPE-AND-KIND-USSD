@@ -10,8 +10,6 @@ const REG_FEE = Number(process.env.REG_FEE || 100);
 const TX_TYPE = process.env.MPESA_TX_TYPE || 'CustomerPayBillOnline'; // or CustomerBuyGoodsOnline
 const BASE = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
 
-const { db, normalizePhone } = require('./_lib/db');
-
 const MENU = 'CON Welcome to HOPE and KIND. Select an option:\n1. Register\n2. Already a member';
 
 function timestamp() {
@@ -61,33 +59,21 @@ module.exports = async (req, res) => {
 
   let out;
   try {
-    const phone = normalizePhone(MSISDN);
     if (parts.length === 0) {
       out = MENU;
     } else if (parts[0] !== '1' && parts[0] !== '2') {
       out = 'END Invalid option. Please dial again.';
+    } else if (parts.length === 1) {
+      out = parts[0] === '1'
+        ? 'CON Enter your full name:'
+        : 'CON You are not a member. Enter your full name to register and pay:';
     } else {
-      const s = db();
-      const { data: member } = await s.from('members').select('name').eq('phone', phone).maybeSingle();
-      if (member) {
-        out = `END Welcome back ${member.name}. You are already a member of HOPE and KIND.`;
-      } else if (parts.length === 1) {
-        out = parts[0] === '1'
-          ? 'CON Enter your full name:'
-          : 'CON You are not a member. Enter your full name to register and pay:';
+      const r = await stkPush(MSISDN, REG_FEE);
+      if (r.ResponseCode === '0') {
+        out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
       } else {
-        const name = parts[1].slice(0, 100);
-        const r = await stkPush(phone, REG_FEE);
-        if (r.ResponseCode === '0') {
-          const { error } = await s.from('payments').insert({
-            checkout_request_id: r.CheckoutRequestID, phone, name, amount: REG_FEE, status: 'pending',
-          });
-          if (error) console.error('Could not save pending payment:', error);
-          out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
-        } else {
-          console.error('STK failed:', r);
-          out = 'END Could not start payment. Please try again later.';
-        }
+        console.error('STK failed:', r);
+        out = 'END Could not start payment. Please try again later.';
       }
     }
   } catch (e) {
