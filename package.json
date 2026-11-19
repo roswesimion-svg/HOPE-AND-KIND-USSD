@@ -1,8 +1,5 @@
 {
   "name": "hope-and-kind-ussd",
-  "version": "2.0.0",
-  "engines": { "node": ">=18" },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.45.0"
-  }
+  "version": "1.0.0",
+  "engines": { "node": ">=18" }
 }
