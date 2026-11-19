@@ -2,7 +2,6 @@
   "rewrites": [
     { "source": "/", "destination": "/api/ussd_app" },
     { "source": "/ussd_app", "destination": "/api/ussd_app" },
-    { "source": "/mpesa/callback", "destination": "/api/mpesa/callback" },
-    { "source": "/admin", "destination": "/api/admin_page" }
+    { "source": "/mpesa/callback", "destination": "/api/mpesa/callback" }
   ]
 }
