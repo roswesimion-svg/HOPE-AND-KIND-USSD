@@ -59,15 +59,17 @@ module.exports = async (req, res) => {
 
   let out;
   try {
+    // name: either 2nd part of a cumulative path (1*John) or the lone latest input (John)
+    let name = null;
+    if (parts[0] === '1' || parts[0] === '2') {
+      if (parts.length > 1) name = parts[1];
+    } else if (parts.length === 1 && /[A-Za-z]/.test(parts[0])) {
+      name = parts[0];
+    }
+
     if (parts.length === 0) {
       out = MENU;
-    } else if (parts[0] !== '1' && parts[0] !== '2') {
-      out = 'END Invalid option. Please dial again.';
-    } else if (parts.length === 1) {
-      out = parts[0] === '1'
-        ? 'CON Enter your full name:'
-        : 'CON You are not a member. Enter your full name to register and pay:';
-    } else {
+    } else if (name) {
       const r = await stkPush(MSISDN, REG_FEE);
       if (r.ResponseCode === '0') {
         out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
@@ -75,6 +77,12 @@ module.exports = async (req, res) => {
         console.error('STK failed:', r);
         out = 'END Could not start payment. Please try again later.';
       }
+    } else if (parts[0] === '1') {
+      out = 'CON Enter your full name:';
+    } else if (parts[0] === '2') {
+      out = 'CON You are not a member. Enter your full name to register and pay:';
+    } else {
+      out = 'END Invalid option. Please dial again.';
     }
   } catch (e) {
     console.error(e);
