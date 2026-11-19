@@ -13,22 +13,52 @@ const BASE = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https
 const MENU = 'CON Welcome to HOPE and KIND. Select an option:\n1. Register\n2. Already a member';
 
 function timestamp() {
-  const d = new Date();
+  // Vercel runs in UTC; Daraja expects East Africa Time (UTC+3)
+  const d = new Date(Date.now() + 3 * 3600 * 1000);
   const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
 }
 
-async function stkPush(msisdn, amount) {
+function normalizeMsisdn(m) {
+  const d = String(m || '').replace(/\D/g, '');
+  if (d.startsWith('254')) return d;
+  if (d.startsWith('0')) return '254' + d.slice(1);
+  if (d.length === 9) return '254' + d;
+  return d;
+}
+
+// fetch with a hard timeout (USSD sessions die fast) and one quick retry on network errors
+async function safeFetch(url, opts = {}, timeoutMs = 4000, retries = 1) {
+  for (let i = 0; ; i++) {
+    try {
+      return await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (e) {
+      if (i >= retries) throw e;
+    }
+  }
+}
+
+// cache the OAuth token between warm invocations (valid ~1h)
+let tokenCache = { value: null, exp: 0 };
+async function getToken() {
+  if (tokenCache.value && Date.now() < tokenCache.exp) return tokenCache.value;
   const auth = Buffer.from(`${CONSUMER_KEY}:${CONSUMER_SECRET}`).toString('base64');
-  const tr = await fetch(`${BASE}/oauth/v1/generate?grant_type=client_credentials`, {
+  const tr = await safeFetch(`${BASE}/oauth/v1/generate?grant_type=client_credentials`, {
     headers: { Authorization: `Basic ${auth}` },
   });
   const { access_token } = await tr.json();
   if (!access_token) throw new Error('Could not get M-Pesa token');
+  tokenCache = { value: access_token, exp: Date.now() + 50 * 60 * 1000 };
+  return access_token;
+}
+
+async function stkPush(msisdn, amount) {
+  msisdn = normalizeMsisdn(msisdn);
+  const access_token = await getToken();
 
   const ts = timestamp();
   const password = Buffer.from(`${SHORTCODE}${PASSKEY}${ts}`).toString('base64');
-  const r = await fetch(`${BASE}/mpesa/stkpush/v1/processrequest`, {
+  const r = await safeFetch(`${BASE}/mpesa/stkpush/v1/processrequest`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -44,7 +74,7 @@ async function stkPush(msisdn, amount) {
       AccountReference: 'Registration',
       TransactionDesc: 'Registration fee',
     }),
-  });
+  }, 5000, 0);
   return r.json();
 }
 
