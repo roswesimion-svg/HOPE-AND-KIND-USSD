@@ -23,8 +23,11 @@ async function stkPush(msisdn, amount) {
   const tr = await fetch(`${BASE}/oauth/v1/generate?grant_type=client_credentials`, {
     headers: { Authorization: `Basic ${auth}` },
   });
-  const { access_token } = await tr.json();
-  if (!access_token) throw new Error('Could not get M-Pesa token');
+  const tText = await tr.text();
+  let tJson = {};
+  try { tJson = JSON.parse(tText); } catch (e) {}
+  const access_token = tJson.access_token;
+  if (!access_token) throw new Error(`M-Pesa token failed: HTTP ${tr.status} body="${tText.slice(0, 200)}" MPESA_ENV=${MPESA_ENV} url=${BASE}`);
 
   const ts = timestamp();
   const password = Buffer.from(`${SHORTCODE}${PASSKEY}${ts}`).toString('base64');
@@ -45,7 +48,8 @@ async function stkPush(msisdn, amount) {
       TransactionDesc: 'Registration fee',
     }),
   });
-  return r.json();
+  const rText = await r.text();
+  try { return JSON.parse(rText); } catch (e) { return { ResponseCode: 'ERR', httpStatus: r.status, raw: rText.slice(0, 200) }; }
 }
 
 module.exports = async (req, res) => {
