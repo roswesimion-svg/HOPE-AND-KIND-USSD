@@ -1,13 +1,14 @@
 // HOPE and KIND USSD - Vercel version (stateless, uses cumulative INPUT like 1*John)
 
-const MPESA_ENV = process.env.MPESA_ENV || 'sandbox'; // 'sandbox' or 'production'
-const CONSUMER_KEY = process.env.MPESA_CONSUMER_KEY;
-const CONSUMER_SECRET = process.env.MPESA_CONSUMER_SECRET;
-const SHORTCODE = process.env.MPESA_SHORTCODE || '174379';
-const PASSKEY = process.env.MPESA_PASSKEY;
-const CALLBACK_URL = process.env.MPESA_CALLBACK_URL;
-const REG_FEE = Number(process.env.REG_FEE || 100);
-const TX_TYPE = process.env.MPESA_TX_TYPE || 'CustomerPayBillOnline'; // or CustomerBuyGoodsOnline
+const env = (name, def = '') => String(process.env[name] || def).trim().replace(/^["']|["']$/g, '').trim();
+const MPESA_ENV = env('MPESA_ENV', 'sandbox'); // 'sandbox' or 'production'
+const CONSUMER_KEY = env('MPESA_CONSUMER_KEY');
+const CONSUMER_SECRET = env('MPESA_CONSUMER_SECRET');
+const SHORTCODE = env('MPESA_SHORTCODE', '174379');
+const PASSKEY = env('MPESA_PASSKEY');
+const CALLBACK_URL = env('MPESA_CALLBACK_URL');
+const REG_FEE = Number(env('REG_FEE', '100'));
+const TX_TYPE = env('MPESA_TX_TYPE', 'CustomerPayBillOnline'); // or CustomerBuyGoodsOnline
 const BASE = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
 
 const MENU = 'CON Welcome to HOPE and KIND. Select an option:\n1. Register\n2. Already a member';
@@ -27,7 +28,7 @@ async function stkPush(msisdn, amount) {
   let tJson = {};
   try { tJson = JSON.parse(tText); } catch (e) {}
   const access_token = tJson.access_token;
-  if (!access_token) throw new Error(`M-Pesa token failed: HTTP ${tr.status} body="${tText.slice(0, 200)}" MPESA_ENV=${MPESA_ENV} url=${BASE}`);
+  if (!access_token) throw new Error(`M-Pesa token failed: HTTP ${tr.status} body="${tText.slice(0, 200)}" MPESA_ENV=${MPESA_ENV} url=${BASE} keyLen=${CONSUMER_KEY.length} secretLen=${CONSUMER_SECRET.length}`);
 
   const ts = timestamp();
   const password = Buffer.from(`${SHORTCODE}${PASSKEY}${ts}`).toString('base64');
