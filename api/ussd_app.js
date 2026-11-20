@@ -63,6 +63,7 @@ module.exports = async (req, res) => {
   while (parts.length && dialSegs.includes(parts[0])) parts.shift();
 
   let out;
+  let pushAfter = false;
   try {
     // name: either 2nd part of a cumulative path (1*John) or the lone latest input (John)
     let name = null;
@@ -75,13 +76,9 @@ module.exports = async (req, res) => {
     if (parts.length === 0) {
       out = MENU;
     } else if (name) {
-      const r = await stkPush(MSISDN, REG_FEE);
-      if (r.ResponseCode === '0') {
-        out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
-      } else {
-        console.error('STK failed:', r);
-        out = 'END Could not start payment. Please try again later.';
-      }
+      // Close the USSD session first; the STK push is sent right after the reply (see end)
+      out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
+      pushAfter = true;
     } else if (parts[0] === '1') {
       out = 'CON Enter your full name:';
     } else if (parts[0] === '2') {
@@ -96,4 +93,15 @@ module.exports = async (req, res) => {
 
   console.log('REQUEST', JSON.stringify(req.query), '->', out.split('\n')[0]);
   res.status(200).send(out);
+
+  if (pushAfter) {
+    await new Promise((r) => setTimeout(r, 1500)); // let the USSD session close on the phone
+    try {
+      const r = await stkPush(MSISDN, REG_FEE);
+      if (r.ResponseCode === '0') console.log('STK sent to', MSISDN);
+      else console.error('STK failed:', r);
+    } catch (e) {
+      console.error('STK error:', e.message);
+    }
+  }
 };
