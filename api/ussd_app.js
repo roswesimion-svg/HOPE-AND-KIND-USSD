@@ -7,7 +7,7 @@ const CONSUMER_SECRET = env('MPESA_CONSUMER_SECRET');
 const SHORTCODE = env('MPESA_SHORTCODE', '174379');
 const PASSKEY = env('MPESA_PASSKEY');
 const CALLBACK_URL = env('MPESA_CALLBACK_URL');
-const REG_FEE = Number(env('REG_FEE', '293'));
+const REG_FEE = Number(env('REG_FEE', '100'));
 const TX_TYPE = env('MPESA_TX_TYPE', 'CustomerPayBillOnline'); // or CustomerBuyGoodsOnline
 const BASE = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
 
@@ -102,6 +102,10 @@ module.exports = async (req, res) => {
       else console.error('STK failed:', r);
     } catch (e) {
       console.error('STK error:', e.message);
+    }
+  }
+};
+
     }
   }
 };
