@@ -1,5 +1,7 @@
 // HOPE and KIND USSD - Vercel version (stateless, uses cumulative INPUT like 1*John)
 
+const { waitUntil } = require('@vercel/functions');
+
 const env = (name, def = '') => String(process.env[name] || def).trim().replace(/^["']|["']$/g, '').trim();
 const MPESA_ENV = env('MPESA_ENV', 'sandbox'); // 'sandbox' or 'production'
 const CONSUMER_KEY = env('MPESA_CONSUMER_KEY');
@@ -55,12 +57,13 @@ async function stkPush(msisdn, amount) {
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'text/plain');
-  const { MSISDN, INPUT, USSDCODE } = req.query;
-  // Dialed code segments (e.g. *814*16#) are ignored if the gateway includes them in INPUT
-  const dialSegs = `${USSDCODE || ''}*${process.env.USSD_CODE || '*814*16#'}`
-    .replace(/#/g, '').split('*').map((x) => x.trim()).filter(Boolean);
-  const parts = String(INPUT || '').replace(/#/g, '').split('*').map((x) => x.trim()).filter(Boolean);
-  while (parts.length && dialSegs.includes(parts[0])) parts.shift();
+  // Mobile Sasa POSTs form-encoded fields (Vercel parses them into req.body)
+  const data = { ...(req.query || {}), ...(req.body || {}) };
+  const MSISDN = data.phoneNumber || data.MSISDN;
+  const INPUT = data.text ?? data.INPUT ?? '';
+
+  // `text` is already only what was typed after your extension, e.g. "1*John"
+  const parts = String(INPUT).replace(/#/g, '').split('*').map((x) => x.trim()).filter(Boolean);
 
   let out;
   let pushAfter = false;
@@ -91,17 +94,19 @@ module.exports = async (req, res) => {
     out = 'END Service unavailable. Please try again later.';
   }
 
-  console.log('REQUEST', JSON.stringify(req.query), '->', out.split('\n')[0]);
+  console.log('REQUEST', JSON.stringify(data), '->', out.split('\n')[0]);
   res.status(200).send(out);
 
   if (pushAfter) {
-    await new Promise((r) => setTimeout(r, 1500)); // let the USSD session close on the phone
-    try {
-      const r = await stkPush(MSISDN, REG_FEE);
-      if (r.ResponseCode === '0') console.log('STK sent to', MSISDN);
-      else console.error('STK failed:', r);
-    } catch (e) {
-      console.error('STK error:', e.message);
-    }
+    waitUntil((async () => {
+      await new Promise((r) => setTimeout(r, 1500)); // let the USSD session close on the phone
+      try {
+        const r = await stkPush(MSISDN, REG_FEE);
+        if (r.ResponseCode === '0') console.log('STK sent to', MSISDN);
+        else console.error('STK failed:', r);
+      } catch (e) {
+        console.error('STK error:', e.message);
+      }
+    })());
   }
 };
