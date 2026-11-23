@@ -1,6 +1,7 @@
 // HOPE and KIND USSD - Vercel version (stateless, uses cumulative INPUT like 1*John)
 
 const { waitUntil } = require('@vercel/functions');
+const { Pool } = require('pg');
 
 const env = (name, def = '') => String(process.env[name] || def).trim().replace(/^["']|["']$/g, '').trim();
 const MPESA_ENV = env('MPESA_ENV', 'sandbox'); // 'sandbox' or 'production'
@@ -11,9 +12,54 @@ const PASSKEY = env('MPESA_PASSKEY');
 const CALLBACK_URL = env('MPESA_CALLBACK_URL');
 const REG_FEE = Number(env('REG_FEE', '100'));
 const TX_TYPE = env('MPESA_TX_TYPE', 'CustomerPayBillOnline'); // or CustomerBuyGoodsOnline
+const DATABASE_URL = env('DATABASE_URL'); // postgres://user:password@host:5432/dbname
+const PG_SSL = env('PG_SSL', 'false') === 'true'; // set PG_SSL=true if the server requires SSL
 const BASE = MPESA_ENV === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
 
 const MENU = 'CON Welcome to HOPE and KIND. Select an option:\n1. Register\n2. Already a member';
+
+// Postgres: one small pool reused across warm invocations (max 1 so we never flood your friend's server)
+let pool = null;
+let tableReady = false;
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      max: 1,
+      connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 10000,
+      ssl: PG_SSL ? { rejectUnauthorized: false } : false,
+    });
+    pool.on('error', (e) => console.error('PG pool error:', e.message));
+  }
+  return pool;
+}
+
+// Save/update a contact (one row per phone number). Never throws: a DB problem must not break registration.
+async function saveContact(phone, name) {
+  if (!DATABASE_URL) { console.error('DATABASE_URL missing - contact NOT saved'); return; }
+  try {
+    const db = getPool();
+    if (!tableReady) {
+      await db.query(`CREATE TABLE IF NOT EXISTS contacts (
+        phone TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        source TEXT DEFAULT 'ussd',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+      tableReady = true;
+    }
+    await db.query(
+      `INSERT INTO contacts (phone, name) VALUES ($1, $2)
+       ON CONFLICT (phone) DO UPDATE SET name = EXCLUDED.name, updated_at = now()`,
+      [phone, name]
+    );
+    console.log('Contact saved:', phone);
+  } catch (e) {
+    console.error('Save contact error:', e.message);
+  }
+}
 
 function timestamp() {
   const d = new Date();
@@ -67,27 +113,26 @@ module.exports = async (req, res) => {
 
   let out;
   let pushAfter = false;
+  let name = '';
   try {
-    // name: either 2nd part of a cumulative path (1*John) or the lone latest input (John)
-    let name = null;
-    if (parts[0] === '1' || parts[0] === '2') {
-      if (parts.length > 1) name = parts[1];
-    } else if (parts.length === 1 && /[A-Za-z]/.test(parts[0])) {
-      name = parts[0];
-    }
+    // text looks like: "1" -> "1*John Doe"
+    const choice = parts[0];
+    const rawName = parts[1] || '';
+    name = rawName.replace(/[^\p{L}\p{M}' .-]/gu, '').trim().slice(0, 100);
 
     if (parts.length === 0) {
       out = MENU;
-    } else if (name) {
-      // Close the USSD session first; the STK push is sent right after the reply (see end)
+    } else if (choice !== '1' && choice !== '2') {
+      out = 'END Invalid option. Please dial again.';
+    } else if (parts.length === 1) {
+      out = choice === '1'
+        ? 'CON Enter your full name:'
+        : 'CON You are not a member. Enter your full name to register and pay:';
+    } else if (name.length < 2) {
+      out = 'END Invalid name. Please dial again.';
+    } else {
       out = `END Registration fee is KES ${REG_FEE}. Enter your M-Pesa PIN on the prompt to complete.`;
       pushAfter = true;
-    } else if (parts[0] === '1') {
-      out = 'CON Enter your full name:';
-    } else if (parts[0] === '2') {
-      out = 'CON You are not a member. Enter your full name to register and pay:';
-    } else {
-      out = 'END Invalid option. Please dial again.';
     }
   } catch (e) {
     console.error(e);
@@ -99,6 +144,7 @@ module.exports = async (req, res) => {
 
   if (pushAfter) {
     waitUntil((async () => {
+      await saveContact(MSISDN, name);
       await new Promise((r) => setTimeout(r, 1500)); // let the USSD session close on the phone
       try {
         const r = await stkPush(MSISDN, REG_FEE);

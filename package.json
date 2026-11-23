@@ -1,6 +1,6 @@
 {
   "name": "hope-and-kind-ussd",
   "version": "1.0.0",
-  "dependencies": { "@vercel/functions": "^1.5.0" },
+  "dependencies": { "@vercel/functions": "^1.5.0", "pg": "^8.11.0" },
   "engines": { "node": ">=18" }
 }
